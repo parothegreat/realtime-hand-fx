@@ -10,7 +10,7 @@ from mediapipe.tasks.python import vision
 from gpu_renderer import GpuRenderer, self_check as gpu_self_check
 
 MODEL = Path(__file__).with_name("hand_landmarker.task")
-CAM_INDEX = 0
+CAM_INDEX = 0 #change to 1 if you're using an external webcam 
 DET_W = 640
 NUM_HANDS = 2
 MIN_SPAN = 40
