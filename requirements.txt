@@ -1,0 +1,3 @@
+mediapipe==0.10.35
+numpy==2.4.6
+gstreamer-bundle==1.28.5; sys_platform == "win32"
