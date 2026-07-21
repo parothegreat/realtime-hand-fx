@@ -47,3 +47,8 @@ camera:
 python main.py --self-check
 python main.py --gpu-check
 ```
+
+## Note
+
+If you run into any issues with the code, feel free to DM me on Instagram at
+[@parothegreat](https://www.instagram.com/parothegreat/).
