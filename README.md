@@ -22,7 +22,7 @@ python main.py
 
 ## Linux
 
-This is the setup for Fedora:
+I'm using Fedora Linux, so here is the setup for Fedora:
 
 ```bash
 git clone https://github.com/parothegreat/realtime-hand-fx.git
