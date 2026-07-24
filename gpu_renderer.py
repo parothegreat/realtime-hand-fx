@@ -225,6 +225,11 @@ float label_length(float effect) {
     return effect < 0.5 ? 4.0 : (effect < 1.5 ? 5.0 : (effect < 2.5 ? 8.0 : 5.0));
 }
 
+float panel_effect(float slot) {
+    slot = mod(slot, 4.0);
+    return slot < 0.5 ? 0.0 : (slot < 1.5 ? 1.0 : (slot < 2.5 ? 3.0 : 2.0));
+}
+
 vec2 floating_label_position(float effect, vec2 local) {
     return vec2(local.x + 8.0 + label_length(effect) * 12.0, local.y);
 }
@@ -307,10 +312,10 @@ void main() {
     float masked = max(max(band0, band1), max(band2, band3));
 
     float mode_id = floor(mode + 0.5);
-    float effect0 = mod(mode_id, 3.0);
-    float effect1 = mod(mode_id + 1.0, 3.0);
-    float effect2 = 3.0;
-    float effect3 = mod(mode_id + 2.0, 3.0);
+    float effect0 = panel_effect(mode_id);
+    float effect1 = panel_effect(mode_id + 1.0);
+    float effect2 = panel_effect(mode_id + 2.0);
+    float effect3 = panel_effect(mode_id + 3.0);
     vec2 frame_size = vec2(frame_w, frame_h);
     vec2 local0 = band_local(mask_uv, l0, r0, r1, l1, frame_size);
     vec2 local1 = band_local(mask_uv, l1, r1, r2, l2, frame_size);
@@ -745,14 +750,22 @@ def self_check():
     renderer.start()
     try:
         original = renderer.pull_output()
-        renderer.update(quads, mode=0, phase=0.5)
-        outputs = [renderer.pull_output(), renderer.pull_output()]
+        outputs = []
+        for mode in range(4):
+            renderer.update(quads, mode=mode, phase=0.5)
+            renderer.pull_output()
+            outputs.append(renderer.pull_output())
         difference = max(
             np.abs(output.astype(np.int16) - original.astype(np.int16)).mean()
             for output in outputs
         )
+        shuffle_difference = min(
+            np.abs(outputs[index].astype(np.int16) - outputs[(index + 1) % 4].astype(np.int16)).mean()
+            for index in range(4)
+        )
         print(f"gpu effect difference: {difference:.2f}")
         assert difference > 8
+        assert shuffle_difference > 1
         print(f"gpu self-check ok: {renderer.context_info()}")
     finally:
         renderer.stop()
