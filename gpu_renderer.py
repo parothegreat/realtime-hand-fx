@@ -5,7 +5,16 @@ import sys
 import time
 from collections import deque
 
-if sys.platform == "win32":
+if (
+    sys.platform.startswith("linux")
+    and os.environ.get("DISPLAY")
+    and "GST_GL_PLATFORM" not in os.environ
+):
+    # ponytail: XWayland provides window decorations; use GTK for native Wayland chrome.
+    os.environ["GST_GL_PLATFORM"] = "glx"
+    os.environ["GST_GL_WINDOW"] = "x11"
+    os.environ["GST_GL_API"] = "opengl"
+elif sys.platform == "win32":
     os.environ.setdefault("GST_GL_API", "opengl")
 
 import gi
@@ -199,6 +208,20 @@ float effect_label(float effect, vec2 local) {
     return glyph(label_code(effect, index), character);
 }
 
+float label_length(float effect) {
+    return effect < 0.5 ? 4.0 : (effect < 1.5 ? 5.0 : 8.0);
+}
+
+vec2 floating_label_position(float effect, vec2 local) {
+    return vec2(local.x + 8.0 + label_length(effect) * 12.0, local.y);
+}
+
+float floating_label_region(float effect, vec2 local) {
+    float width = 8.0 + label_length(effect) * 12.0;
+    return step(-width, local.x) * step(local.x, -2.0) *
+        step(1.0, local.y) * step(local.y, 20.0);
+}
+
 float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
@@ -231,57 +254,75 @@ void main() {
     float band1 = inside_quad(mask_uv, l1, r1, r2, l2);
     float band2 = inside_quad(mask_uv, l2, r2, r3, l3);
     float masked = max(band0, max(band1, band2));
-    if (masked < 0.5) {
+
+    float mode_id = floor(mode + 0.5);
+    float effect0 = mod(mode_id, 3.0);
+    float effect1 = mod(mode_id + 1.0, 3.0);
+    float effect2 = mod(mode_id + 2.0, 3.0);
+    vec2 frame_size = vec2(frame_w, frame_h);
+    vec2 local0 = band_local(mask_uv, l0, r0, r1, l1, frame_size);
+    vec2 local1 = band_local(mask_uv, l1, r1, r2, l2, frame_size);
+    vec2 local2 = band_local(mask_uv, l2, r2, r3, l3, frame_size);
+    float label_region0 = floating_label_region(effect0, local0);
+    float label_region1 = floating_label_region(effect1, local1);
+    float label_region2 = floating_label_region(effect2, local2);
+    float label_region = max(label_region0, max(label_region1, label_region2));
+    if (masked < 0.5 && label_region < 0.5) {
         gl_FragColor = original;
         return;
     }
 
-    float band_id = band0 > 0.5 ? 0.0 : (band1 > 0.5 ? 1.0 : 2.0);
-    float effect_id = mod(band_id + floor(mode + 0.5), 3.0);
-    vec2 frame_size = vec2(frame_w, frame_h);
-    float border;
-    vec2 label_position;
-    if (band_id < 0.5) {
-        border = quad_border(mask_uv, l0, r0, r1, l1, frame_size, band0);
-        label_position = band_local(mask_uv, l0, r0, r1, l1, frame_size);
-    } else if (band_id < 1.5) {
-        border = quad_border(mask_uv, l1, r1, r2, l2, frame_size, band1);
-        label_position = band_local(mask_uv, l1, r1, r2, l2, frame_size);
-    } else {
-        border = quad_border(mask_uv, l2, r2, r3, l3, frame_size, band2);
-        label_position = band_local(mask_uv, l2, r2, r3, l3, frame_size);
-    }
-    float label_length = effect_id < 0.5 ? 4.0 : (effect_id < 1.5 ? 5.0 : 8.0);
-    float label_background =
-        step(2.0, label_position.x) * step(label_position.x, 8.0 + label_length * 12.0) *
-        step(1.5, label_position.y) * step(label_position.y, 20.0);
     float label = 0.0;
-    if (label_background > 0.5) {
-        label = effect_label(effect_id, label_position);
+    float label_shadow = 0.0;
+    if (label_region0 > 0.5) {
+        vec2 position = floating_label_position(effect0, local0);
+        label = max(label, effect_label(effect0, position));
+        label_shadow = max(label_shadow, effect_label(effect0, position - vec2(1.0)));
     }
-    float displacement = sin(mask_uv.y * frame_h * 0.075 + phase * 3.2) * 0.004;
-    vec2 fx_uv = clamp(uv + vec2(displacement, 0.0), vec2(0.0), vec2(1.0));
-    vec3 source = texture2D(tex, fx_uv).rgb;
-    float gray = luminance(source);
+    if (label_region1 > 0.5) {
+        vec2 position = floating_label_position(effect1, local1);
+        label = max(label, effect_label(effect1, position));
+        label_shadow = max(label_shadow, effect_label(effect1, position - vec2(1.0)));
+    }
+    if (label_region2 > 0.5) {
+        vec2 position = floating_label_position(effect2, local2);
+        label = max(label, effect_label(effect2, position));
+        label_shadow = max(label_shadow, effect_label(effect2, position - vec2(1.0)));
+    }
 
-    vec3 mono = vec3(smoothstep(0.28, 0.72, gray));
+    vec3 final_color = original.rgb;
+    if (masked > 0.5) {
+        float band_id = band0 > 0.5 ? 0.0 : (band1 > 0.5 ? 1.0 : 2.0);
+        float effect_id = mod(band_id + mode_id, 3.0);
+        float border;
+        if (band_id < 0.5) {
+            border = quad_border(mask_uv, l0, r0, r1, l1, frame_size, band0);
+        } else if (band_id < 1.5) {
+            border = quad_border(mask_uv, l1, r1, r2, l2, frame_size, band1);
+        } else {
+            border = quad_border(mask_uv, l2, r2, r3, l3, frame_size, band2);
+        }
 
-    vec2 pixel_grid = vec2(54.0, 30.0);
-    vec2 pixel_uv = (floor(fx_uv * pixel_grid) + 0.5) / pixel_grid;
-    vec3 pixelated = texture2D(tex, pixel_uv).rgb;
-
-    vec2 texel = 1.0 / vec2(frame_w, frame_h);
-    float gx = abs(gray - luminance(texture2D(tex, fx_uv + vec2(texel.x, 0.0)).rgb));
-    float gy = abs(gray - luminance(texture2D(tex, fx_uv + vec2(0.0, texel.y)).rgb));
-    float noise = hash21(floor(fx_uv * vec2(frame_w, frame_h) * 0.55) + floor(phase * 12.0));
-    float point = step(noise, clamp(gray * 0.42 + (gx + gy) * 4.5, 0.0, 0.9));
-    vec3 particles = vec3(point * max(gray, 0.72));
-
-    vec3 effected = effect_id < 0.5 ? mono : (effect_id < 1.5 ? pixelated : particles);
-    float scanline = 0.76 + 0.24 * step(0.5, fract(mask_uv.y * frame_h * 0.25));
-    vec3 final_color = effected * scanline;
-    final_color = mix(final_color, final_color * 0.18, label_background * 0.68);
-    final_color = mix(final_color, vec3(0.94, 0.98, 1.0), max(border * 0.9, label));
+        float displacement = sin(mask_uv.y * frame_h * 0.075 + phase * 3.2) * 0.004;
+        vec2 fx_uv = clamp(uv + vec2(displacement, 0.0), vec2(0.0), vec2(1.0));
+        vec3 source = texture2D(tex, fx_uv).rgb;
+        float gray = luminance(source);
+        vec3 mono = vec3(smoothstep(0.28, 0.72, gray));
+        vec2 pixel_grid = vec2(54.0, 30.0);
+        vec2 pixel_uv = (floor(fx_uv * pixel_grid) + 0.5) / pixel_grid;
+        vec3 pixelated = texture2D(tex, pixel_uv).rgb;
+        vec2 texel = 1.0 / frame_size;
+        float gx = abs(gray - luminance(texture2D(tex, fx_uv + vec2(texel.x, 0.0)).rgb));
+        float gy = abs(gray - luminance(texture2D(tex, fx_uv + vec2(0.0, texel.y)).rgb));
+        float noise = hash21(floor(fx_uv * frame_size * 0.55) + floor(phase * 12.0));
+        float point = step(noise, clamp(gray * 0.42 + (gx + gy) * 4.5, 0.0, 0.9));
+        vec3 particles = vec3(point * max(gray, 0.72));
+        vec3 effected = effect_id < 0.5 ? mono : (effect_id < 1.5 ? pixelated : particles);
+        float scanline = 0.76 + 0.24 * step(0.5, fract(mask_uv.y * frame_h * 0.25));
+        final_color = mix(effected * scanline, vec3(0.94, 0.98, 1.0), border * 0.9);
+    }
+    final_color = mix(final_color, vec3(0.0), label_shadow * 0.72);
+    final_color = mix(final_color, vec3(0.94, 0.98, 1.0), label);
     gl_FragColor = vec4(final_color, 1.0);
 }
 """
@@ -402,6 +443,7 @@ class GpuRenderer:
         camera_index=None,
         detect_width=640,
         detect_height=None,
+        window_width=960,
         headless=False,
     ):
         self.camera_index = camera_index
@@ -422,6 +464,10 @@ class GpuRenderer:
         self.detect_width = detect_width
         self.detect_height = detect_height or max(
             2, round(height * detect_width / width / 2) * 2
+        )
+        self.window_width = min(window_width, width)
+        self.window_height = max(
+            2, round(height * self.window_width / width / 2) * 2
         )
         self.headless = headless
         self.keys = deque()
@@ -447,7 +493,12 @@ class GpuRenderer:
             "gldownload ! video/x-raw,format=RGBA ! "
             "appsink name=out sync=false max-buffers=1 drop=true"
             if headless
-            else "glimagesink name=out sync=false force-aspect-ratio=true"
+            else (
+                "glcolorscale ! "
+                "video/x-raw(memory:GLMemory),format=RGBA,"
+                f"width={self.window_width},height={self.window_height} ! "
+                "glimagesink name=out sync=false force-aspect-ratio=true"
+            )
         )
         description = (
             source
