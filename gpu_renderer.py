@@ -73,6 +73,10 @@ uniform float l3x;
 uniform float l3y;
 uniform float r3x;
 uniform float r3y;
+uniform float l4x;
+uniform float l4y;
+uniform float r4x;
+uniform float r4y;
 
 float cross2(vec2 a, vec2 b) {
     return a.x * b.y - a.y * b.x;
@@ -160,8 +164,11 @@ float glyph_row(float code, float row) {
         bits = row < 0.5 ? 30.0 : (row < 2.5 ? 17.0 : (row < 3.5 ? 30.0 : (row < 4.5 ? 20.0 : (row < 5.5 ? 18.0 : 17.0))));
     } else if (code < 10.5) {
         bits = row < 0.5 ? 31.0 : 4.0;
-    } else {
+    } else if (code < 11.5) {
         bits = (row < 0.5 || row > 5.5) ? 15.0 : 16.0;
+    } else {
+        bits = (row < 0.5 || row > 5.5 || (row > 2.5 && row < 3.5))
+            ? 31.0 : (row < 3.5 ? 16.0 : 1.0);
     }
     return bits;
 }
@@ -187,7 +194,7 @@ float label_code(float effect, float index) {
         if (index < 2.5) return 5.0;
         if (index < 3.5) return 6.0;
         if (index < 4.5) return 7.0;
-    } else {
+    } else if (effect < 2.5) {
         if (index < 0.5) return 3.0;
         if (index < 1.5) return 8.0;
         if (index < 2.5) return 9.0;
@@ -196,6 +203,12 @@ float label_code(float effect, float index) {
         if (index < 5.5) return 11.0;
         if (index < 6.5) return 7.0;
         if (index < 7.5) return 6.0;
+    } else {
+        if (index < 0.5) return 8.0;
+        if (index < 1.5) return 12.0;
+        if (index < 2.5) return 11.0;
+        if (index < 3.5) return 4.0;
+        if (index < 4.5) return 4.0;
     }
     return -1.0;
 }
@@ -209,7 +222,7 @@ float effect_label(float effect, vec2 local) {
 }
 
 float label_length(float effect) {
-    return effect < 0.5 ? 4.0 : (effect < 1.5 ? 5.0 : 8.0);
+    return effect < 0.5 ? 4.0 : (effect < 1.5 ? 5.0 : (effect < 2.5 ? 8.0 : 5.0));
 }
 
 vec2 floating_label_position(float effect, vec2 local) {
@@ -232,6 +245,41 @@ float luminance(vec3 color) {
     return dot(color, vec3(0.299, 0.587, 0.114));
 }
 
+float ascii_line(vec2 p, vec2 a, vec2 b) {
+    return 1.0 - smoothstep(0.045, 0.085, segment_distance(p, a, b));
+}
+
+float ascii_mark(float gray, vec2 p) {
+    float dot_mark = 1.0 - smoothstep(0.04, 0.085, length(p - vec2(0.5, 0.72)));
+    float colon = max(
+        1.0 - smoothstep(0.04, 0.08, length(p - vec2(0.5, 0.34))),
+        1.0 - smoothstep(0.04, 0.08, length(p - vec2(0.5, 0.68)))
+    );
+    float plus = max(
+        ascii_line(p, vec2(0.25, 0.5), vec2(0.75, 0.5)),
+        ascii_line(p, vec2(0.5, 0.25), vec2(0.5, 0.75))
+    );
+    float star = max(plus, max(
+        ascii_line(p, vec2(0.3, 0.3), vec2(0.7, 0.7)),
+        ascii_line(p, vec2(0.7, 0.3), vec2(0.3, 0.7))
+    ));
+    float hash_mark = max(max(
+        ascii_line(p, vec2(0.37, 0.2), vec2(0.37, 0.8)),
+        ascii_line(p, vec2(0.63, 0.2), vec2(0.63, 0.8))
+    ), max(
+        ascii_line(p, vec2(0.22, 0.4), vec2(0.78, 0.4)),
+        ascii_line(p, vec2(0.22, 0.62), vec2(0.78, 0.62))
+    ));
+    float at_mark = max(
+        1.0 - smoothstep(0.04, 0.08, abs(length((p - 0.5) * vec2(0.9, 1.0)) - 0.3)),
+        max(ascii_line(p, vec2(0.52, 0.42), vec2(0.52, 0.65)),
+            ascii_line(p, vec2(0.52, 0.62), vec2(0.72, 0.62)))
+    );
+    return gray < 0.12 ? 0.0 : (gray < 0.27 ? dot_mark :
+        (gray < 0.42 ? colon : (gray < 0.57 ? plus :
+        (gray < 0.72 ? star : (gray < 0.87 ? hash_mark : at_mark)))));
+}
+
 void main() {
     vec2 mask_uv = v_texcoord;
     vec2 uv = vec2(1.0 - mask_uv.x, mask_uv.y);
@@ -249,24 +297,30 @@ void main() {
     vec2 r2 = vec2(r2x, r2y);
     vec2 l3 = vec2(l3x, l3y);
     vec2 r3 = vec2(r3x, r3y);
+    vec2 l4 = vec2(l4x, l4y);
+    vec2 r4 = vec2(r4x, r4y);
 
     float band0 = inside_quad(mask_uv, l0, r0, r1, l1);
     float band1 = inside_quad(mask_uv, l1, r1, r2, l2);
     float band2 = inside_quad(mask_uv, l2, r2, r3, l3);
-    float masked = max(band0, max(band1, band2));
+    float band3 = inside_quad(mask_uv, l3, r3, r4, l4);
+    float masked = max(max(band0, band1), max(band2, band3));
 
     float mode_id = floor(mode + 0.5);
     float effect0 = mod(mode_id, 3.0);
     float effect1 = mod(mode_id + 1.0, 3.0);
-    float effect2 = mod(mode_id + 2.0, 3.0);
+    float effect2 = 3.0;
+    float effect3 = mod(mode_id + 2.0, 3.0);
     vec2 frame_size = vec2(frame_w, frame_h);
     vec2 local0 = band_local(mask_uv, l0, r0, r1, l1, frame_size);
     vec2 local1 = band_local(mask_uv, l1, r1, r2, l2, frame_size);
     vec2 local2 = band_local(mask_uv, l2, r2, r3, l3, frame_size);
+    vec2 local3 = band_local(mask_uv, l3, r3, r4, l4, frame_size);
     float label_region0 = floating_label_region(effect0, local0);
     float label_region1 = floating_label_region(effect1, local1);
     float label_region2 = floating_label_region(effect2, local2);
-    float label_region = max(label_region0, max(label_region1, label_region2));
+    float label_region3 = floating_label_region(effect3, local3);
+    float label_region = max(max(label_region0, label_region1), max(label_region2, label_region3));
     if (masked < 0.5 && label_region < 0.5) {
         gl_FragColor = original;
         return;
@@ -289,18 +343,26 @@ void main() {
         label = max(label, effect_label(effect2, position));
         label_shadow = max(label_shadow, effect_label(effect2, position - vec2(1.0)));
     }
+    if (label_region3 > 0.5) {
+        vec2 position = floating_label_position(effect3, local3);
+        label = max(label, effect_label(effect3, position));
+        label_shadow = max(label_shadow, effect_label(effect3, position - vec2(1.0)));
+    }
 
     vec3 final_color = original.rgb;
     if (masked > 0.5) {
-        float band_id = band0 > 0.5 ? 0.0 : (band1 > 0.5 ? 1.0 : 2.0);
-        float effect_id = mod(band_id + mode_id, 3.0);
+        float band_id = band0 > 0.5 ? 0.0 : (band1 > 0.5 ? 1.0 : (band2 > 0.5 ? 2.0 : 3.0));
+        float effect_id = band_id < 0.5 ? effect0 :
+            (band_id < 1.5 ? effect1 : (band_id < 2.5 ? effect2 : effect3));
         float border;
         if (band_id < 0.5) {
             border = quad_border(mask_uv, l0, r0, r1, l1, frame_size, band0);
         } else if (band_id < 1.5) {
             border = quad_border(mask_uv, l1, r1, r2, l2, frame_size, band1);
-        } else {
+        } else if (band_id < 2.5) {
             border = quad_border(mask_uv, l2, r2, r3, l3, frame_size, band2);
+        } else {
+            border = quad_border(mask_uv, l3, r3, r4, l4, frame_size, band3);
         }
 
         float displacement = sin(mask_uv.y * frame_h * 0.075 + phase * 3.2) * 0.004;
@@ -317,7 +379,14 @@ void main() {
         float noise = hash21(floor(fx_uv * frame_size * 0.55) + floor(phase * 12.0));
         float point = step(noise, clamp(gray * 0.42 + (gx + gy) * 4.5, 0.0, 0.9));
         vec3 particles = vec3(point * max(gray, 0.72));
-        vec3 effected = effect_id < 0.5 ? mono : (effect_id < 1.5 ? pixelated : particles);
+        vec2 ascii_cell = vec2(9.0, 12.0);
+        vec2 ascii_pixel = floor(mask_uv * frame_size / ascii_cell) * ascii_cell;
+        vec2 ascii_sample = (ascii_pixel + ascii_cell * 0.5) / frame_size;
+        ascii_sample.x = 1.0 - ascii_sample.x;
+        float ascii_gray = luminance(texture2D(tex, clamp(ascii_sample, vec2(0.0), vec2(1.0))).rgb);
+        vec3 ascii = vec3(ascii_mark(ascii_gray, mod(mask_uv * frame_size, ascii_cell) / ascii_cell));
+        vec3 effected = effect_id < 0.5 ? mono : (effect_id < 1.5 ? pixelated :
+            (effect_id < 2.5 ? particles : ascii));
         float scanline = 0.76 + 0.24 * step(0.5, fract(mask_uv.y * frame_h * 0.25));
         final_color = mix(effected * scanline, vec3(0.94, 0.98, 1.0), border * 0.9);
     }
@@ -582,18 +651,14 @@ class GpuRenderer:
             "frame_w": self.width,
             "frame_h": self.height,
         }
-        for index in range(4):
+        for index in range(5):
             values.update({f"l{index}x": 0.0, f"l{index}y": 0.0})
             values.update({f"r{index}x": 0.0, f"r{index}y": 0.0})
 
         if quads is not None:
             values["active"] = 1.0
-            boundaries = (
-                (quads[0][0], quads[0][1]),
-                (quads[0][3], quads[0][2]),
-                (quads[1][3], quads[1][2]),
-                (quads[2][3], quads[2][2]),
-            )
+            boundaries = [(quads[0][0], quads[0][1])]
+            boundaries.extend((quad[3], quad[2]) for quad in quads)
             for index, (left, right) in enumerate(boundaries):
                 values[f"l{index}x"] = left[0] / self.width
                 values[f"l{index}y"] = left[1] / self.height
@@ -666,10 +731,11 @@ def self_check():
 
     width, height = 320, 180
     boundaries = (
-        ((55, 25), (265, 30)),
-        ((60, 60), (260, 65)),
-        ((65, 105), (255, 110)),
-        ((70, 150), (250, 155)),
+        ((55, 20), (265, 25)),
+        ((60, 55), (260, 60)),
+        ((65, 90), (255, 95)),
+        ((68, 125), (252, 130)),
+        ((70, 160), (250, 165)),
     )
     quads = [
         np.float32([left_a, right_a, right_b, left_b])

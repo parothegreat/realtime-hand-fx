@@ -19,8 +19,9 @@ MAX_PREDICTION = 0.05
 SNAP_RATIO = 0.5
 SNAP_COOLDOWN = 0.6
 
-WRIST, THUMB, INDEX, MIDDLE, PINKY, MIDDLE_MCP = 0, 4, 8, 12, 20, 9
-PANEL_ANCHORS = (INDEX, MIDDLE, PINKY, THUMB)
+WRIST, THUMB, INDEX, MIDDLE, RING, PINKY, MIDDLE_MCP = 0, 4, 8, 12, 16, 20, 9
+PANEL_ANCHORS = (INDEX, MIDDLE, RING, PINKY, THUMB)
+NUM_MODES = 3
 
 
 class OneEuroHandFilter:
@@ -167,19 +168,20 @@ def is_pinched(p):
 def self_check():
     left = np.zeros((21, 2), np.float32)
     right = np.zeros((21, 2), np.float32)
-    left[[INDEX, MIDDLE, PINKY]] = [(20, 18), (25, 40), (30, 65)]
-    right[[INDEX, MIDDLE, PINKY]] = [(130, 23), (135, 45), (140, 70)]
+    left[[INDEX, MIDDLE, RING, PINKY]] = [(20, 18), (25, 40), (28, 54), (30, 65)]
+    right[[INDEX, MIDDLE, RING, PINKY]] = [(130, 23), (135, 45), (138, 59), (140, 70)]
     left[THUMB] = (35, 100)
     right[THUMB] = (125, 105)
     left[WRIST] = (15, 80)
     right[WRIST] = (145, 80)
 
     quads = mask_quads_from_hands([right, left])
-    assert len(quads) == 3
+    assert len(quads) == 4
     assert np.allclose(quads[0], [[20, 18], [130, 23], [135, 45], [25, 40]])
-    assert np.allclose(quads[2], [[30, 65], [140, 70], [125, 105], [35, 100]])
-    assert np.allclose(quads[0][2:], quads[1][1::-1])
-    assert np.allclose(quads[1][2:], quads[2][1::-1])
+    assert np.allclose(quads[2], [[28, 54], [138, 59], [140, 70], [30, 65]])
+    assert np.allclose(quads[3], [[30, 65], [140, 70], [125, 105], [35, 100]])
+    for upper, lower in zip(quads, quads[1:]):
+        assert np.allclose(upper[2:], lower[1::-1])
 
     hand = np.zeros((21, 2), np.float32)
     hand[MIDDLE_MCP] = (0, 50)
@@ -264,7 +266,7 @@ def main():
             hands = projected_hands(tracks, now - start)
             pinched = any(is_pinched(hand) for hand in hands)
             if pinched and not pinched_prev and now - last_snap > SNAP_COOLDOWN:
-                mode = (mode + 1) % 3
+                mode = (mode + 1) % NUM_MODES
                 last_snap = now
             pinched_prev = pinched
 
@@ -285,9 +287,9 @@ def main():
                 if key in ("q", "escape"):
                     running = False
                 elif key in ("n", "space", " "):
-                    mode = (mode + 1) % 3
+                    mode = (mode + 1) % NUM_MODES
                 elif key == "p":
-                    mode = (mode - 1) % 3
+                    mode = (mode - 1) % NUM_MODES
                 key = renderer.pop_key()
     except KeyboardInterrupt:
         pass
